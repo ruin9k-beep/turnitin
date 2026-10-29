@@ -43,15 +43,7 @@ Left-click the minimap coin for the quest list, right-click it for the tracker w
 - The 1.12 client does not flag repeatable quests. A quest counts as repeatable once an NPC offers it again after you turned it in, or when you track it by hand.
 - Honor, reputation and XP are read from English chat messages after a turn-in.
 - Quest windows may close after each turn-in, so auto turn-in can need one right-click per cycle.
-- Written for the 1.12 client (Lua 5.0). Tested against a mock of the WoW API (see below), so please report anything that behaves differently in the real client.
-
-## Tests
-
-`tests/harness.lua` runs the addon's logic against a mock of the WoW 1.12 API. It needs a Lua interpreter (the tests were run with `texlua`):
-
-```
-texlua tests/harness.lua TurnItIn/TurnItIn.lua
-```
+- Written for the 1.12 client (Lua 5.0). Tested against a mock of the WoW API rather than the live client, so please report anything that behaves differently in the real client.
 
 ## License
 
