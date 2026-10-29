@@ -4,4 +4,4 @@
 ## Version: 2.2
 ## SavedVariables: TurnItInDB
 
-TurnItIn.lua
+turnitin.lua

@@ -1153,7 +1153,7 @@ f:RegisterEvent("CHAT_MSG_COMBAT_XP_GAIN")
 
 f:SetScript("OnEvent", function()
   if event == "ADDON_LOADED" then
-    if arg1 ~= "TurnItIn" then return end
+    if string.lower(arg1 or "") ~= "turnitin" then return end
     if not TurnItInDB or TurnItInDB.version ~= 2 then
       TurnItInDB = { version = 2, quests = {} }
     end
