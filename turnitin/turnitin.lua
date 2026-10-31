@@ -364,7 +364,7 @@ end
 
 -- Auto turn-in on/off button (bottom right)
 local autoButton = CreateFrame("Button", "TIIAutoButton", tracker, "UIPanelButtonTemplate")
-autoButton:SetWidth(80)
+autoButton:SetWidth(130)
 autoButton:SetHeight(20)
 autoButton:SetPoint("BOTTOMRIGHT", tracker, "BOTTOMRIGHT", -6, 6)
 autoButton:SetScript("OnClick", function()
@@ -538,7 +538,7 @@ Refresh = function()
   end
 
   if isPreview then trackButton:Show() else trackButton:Hide() end
-  autoButton:SetText(auto and "|cff00ff00Auto: ON|r" or "|cffff0000Auto: OFF|r")
+  autoButton:SetText(auto and "|cff00ff00Auto Turn In: ON|r" or "|cffff0000Auto Turn In: OFF|r")
 
   tracker:SetHeight(height)
   tracker:SetWidth(math.max(270, text:GetWidth() + 16))
@@ -1072,6 +1072,23 @@ local function IsSelectedQuest(title)
   return Strip(title) == q.title and UnitName("npc") == q.npc
 end
 
+-- True if the bags hold enough for at least one turn-in of the selected quest.
+-- When the requirements are not known yet there is nothing to check against,
+-- so the quest is allowed. Otherwise auto turn-in is switched off and the
+-- quest is left alone instead of being picked up.
+local function CanPickUp()
+  local q = Selected()
+  if not q then return false end
+  local p = Possible(q)
+  if p ~= nil and p < 1 then
+    auto = false
+    Print("Not enough items for " .. q.title .. " - not picking it up. Auto turn-in stopped.")
+    Refresh()
+    return false
+  end
+  return true
+end
+
 -- Gossip lists return title, level pairs; count only the titles.
 local function PickGossip(list)
   local idx = 0
@@ -1088,7 +1105,7 @@ local function HandleGossip()
   local i = PickGossip({ GetGossipActiveQuests() })
   if i then SelectGossipActiveQuest(i) return end
   i = PickGossip({ GetGossipAvailableQuests() })
-  if i then SelectGossipAvailableQuest(i) end
+  if i and CanPickUp() then SelectGossipAvailableQuest(i) end
 end
 
 local function HandleGreeting()
@@ -1096,7 +1113,10 @@ local function HandleGreeting()
     if IsSelectedQuest(GetActiveTitle(i)) then SelectActiveQuest(i) return end
   end
   for i = 1, GetNumAvailableQuests() do
-    if IsSelectedQuest(GetAvailableTitle(i)) then SelectAvailableQuest(i) return end
+    if IsSelectedQuest(GetAvailableTitle(i)) then
+      if CanPickUp() then SelectAvailableQuest(i) end
+      return
+    end
   end
 end
 
@@ -1211,7 +1231,7 @@ f:SetScript("OnEvent", function()
     if not UnitName("npc") or not title then return end
     MarkAvailable(title)
     Observe("detail")
-    if auto and IsSelectedQuest(title) then AcceptQuest() end
+    if auto and IsSelectedQuest(title) and CanPickUp() then AcceptQuest() end
 
   elseif event == "QUEST_PROGRESS" then
     local title = Strip(GetTitleText())
