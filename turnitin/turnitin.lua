@@ -13,6 +13,7 @@ local Refresh            -- forward declaration
 local RefreshList        -- forward declaration (quest list window)
 local preview            -- key of the quest whose dialog is open (not yet tracked)
 local debugOn = false
+local migrationNote  -- one-time message about quests re-checked on load
 
 local function Print(msg)
   DEFAULT_CHAT_FRAME:AddMessage("|cff66ccffTurn It In:|r " .. msg)
@@ -31,6 +32,20 @@ local function Strip(s)
   s = string.gsub(s, "|r", "")
   s = string.gsub(s, "^%[%d+%+?%]%s*", "")
   return s
+end
+
+-- A number identifying a piece of quest text. Case, spacing and punctuation
+-- are ignored so the same text read from two different windows matches.
+local function Fingerprint(a, b)
+  local t = string.lower((a or "") .. (b or ""))
+  t = string.gsub(t, "[^%w]", "")
+  local n = string.len(t)
+  if n == 0 then return nil end
+  local h = 7
+  for i = 1, n do
+    h = math.mod(h * 31 + string.byte(t, i), 2147483629)
+  end
+  return h
 end
 
 local function QuestKey(npc, title)
@@ -188,6 +203,24 @@ local function ReadQuestLog(title)
   end
   if prev and prev > 0 then SelectQuestLogEntry(prev) end
   return money, items, choices
+end
+
+-- Fingerprint of a logged quest's description and objectives.
+local function LogFingerprint(title)
+  local found = nil
+  for i = 1, GetNumQuestLogEntries() do
+    local t, _, _, isHeader = GetQuestLogTitle(i)
+    if t and not isHeader and Strip(t) == title then
+      found = i
+      break
+    end
+  end
+  if not found then return nil end
+  local prev = GetQuestLogSelection()
+  SelectQuestLogEntry(found)
+  local desc, obj = GetQuestLogQuestText()
+  if prev and prev > 0 then SelectQuestLogEntry(prev) end
+  return Fingerprint(desc, obj)
 end
 
 -- Only overwrite stored rewards when the new reading actually contains some.
@@ -382,6 +415,7 @@ trackButton:SetScript("OnClick", function()
   local q = preview and DB.quests[preview]
   if not q then return end
   q.repeatable = true
+  q.manual = true
   StampLocation(q)
   DB.selected = preview
   preview = nil
@@ -706,6 +740,7 @@ local function GetRow(i)
     if not q then return end
     if not q.repeatable then
       q.repeatable = true
+      q.manual = true
       Print("Tracking: " .. q.title)
     end
     DB.selected = this.key
@@ -970,6 +1005,19 @@ local function OnReward()
     q.needMoney = s.needMoney
   end
   MergeRewards(q, CaptureRewards())
+
+  -- A different completion text under the same title is another quest of a chain
+  local fpDone = Fingerprint(GetRewardText())
+  if fpDone and q.fpDone and fpDone ~= q.fpDone then
+    q.completions = 0
+    q.fpDetail = nil
+    q.detailAt = nil
+    q.fpLog = nil
+    q.logAt = nil
+    if not q.manual then q.repeatable = nil end
+  end
+  if fpDone then q.fpDone = fpDone end
+
   q.completions = q.completions + 1
   q.last = time()
   StampLocation(q)
@@ -992,18 +1040,51 @@ end
 -- as repeatable once it is offered again after being turned in
 -- (or once it has been turned in twice).
 ----------------------------------------------------------------
+-- Only logs what an NPC offers. A title alone cannot show that a quest repeats,
+-- because quest chains reuse titles; the quest text is compared in CheckDetail.
 local function MarkAvailable(title)
   local npc = UnitName("npc")
   if not npc or not title then return end
   local q = DB.quests[QuestKey(npc, Strip(title))]
   Debug("offered: " .. QuestKey(npc, Strip(title)) .. " known=" .. tostring(q ~= nil) ..
         (q and (" completions=" .. q.completions .. " repeatable=" .. tostring(q.repeatable)) or ""))
-  if q and not q.repeatable and q.completions >= 1 then
-    q.repeatable = true
-    StampLocation(q)
-    Print("Recorded repeatable quest: " .. q.title)
-    UpdateVisibility()
-    Refresh()
+end
+
+-- Compare the text of the quest being offered with what was recorded before.
+-- Same text after a turn-in = the quest repeats. Different text under the same
+-- title = a later step of a quest chain, which must not be treated as a repeat.
+local function CheckDetail(q, fp)
+  if not fp then return end
+  local viaDetail = q.fpDetail and fp == q.fpDetail
+  local viaLog = q.fpLog and fp == q.fpLog
+  if viaDetail or viaLog then
+    -- Seen before. It only proves a repeat if a turn-in happened after the
+    -- text was recorded; re-opening the same dialog proves nothing.
+    local proven = (viaDetail and q.completions > (q.detailAt or 0))
+                or (viaLog and q.completions > (q.logAt or 0))
+    if not q.fpDetail then
+      q.fpDetail = fp
+      q.detailAt = q.completions
+    end
+    if proven and not q.repeatable then
+      q.repeatable = true
+      StampLocation(q)
+      Print("Recorded repeatable quest: " .. q.title)
+      UpdateVisibility()
+    end
+  elseif q.fpDetail then
+    Debug("different quest text under the same title: " .. q.title)
+    q.completions = 0
+    q.fpDone = nil
+    q.fpLog = nil
+    q.logAt = nil
+    q.observed = nil
+    if not q.manual then q.repeatable = nil end
+    q.fpDetail = fp
+    q.detailAt = 0
+  else
+    q.fpDetail = fp
+    q.detailAt = q.completions
   end
 end
 
@@ -1017,7 +1098,18 @@ local function Observe(stage)
   q.last = time()
   StampLocation(q)
 
+  if stage == "detail" then
+    CheckDetail(q, Fingerprint(GetQuestText(), GetObjectiveText()))
+  end
+
   if stage == "progress" then
+    if not q.fpLog then
+      local okf, fpl = pcall(LogFingerprint, title)
+      if okf and fpl then
+        q.fpLog = fpl
+        q.logAt = q.completions
+      end
+    end
     local req, needMoney = CaptureRequirements()
     seen[key] = { req = req, needMoney = needMoney }
     q.req = req
@@ -1178,6 +1270,28 @@ f:SetScript("OnEvent", function()
       TurnItInDB = { version = 2, quests = {} }
     end
     DB = TurnItInDB
+
+    -- Earlier versions flagged a quest as repeatable when it was merely offered
+    -- again after one turn-in, which also caught quest chains that reuse a title.
+    -- Re-check those once; quests tracked by hand or turned in repeatedly stay.
+    if not DB.checkedChains then
+      DB.checkedChains = true
+      local dropped = {}
+      for key, q in pairs(DB.quests) do
+        if q.repeatable and (q.completions or 0) == 0 then
+          q.manual = true
+        elseif q.repeatable and q.completions == 1 then
+          q.repeatable = nil
+          table.insert(dropped, q.title)
+        end
+      end
+      if table.getn(dropped) > 0 then
+        table.sort(dropped)
+        migrationNote = "Re-checked quests that were flagged after a single turn-in and un-flagged: " ..
+          table.concat(dropped, ", ") .. ". If any really repeats, press Track quest while it is open."
+      end
+    end
+
     -- Forget quests that were turned in once and never came back
     local now = time()
     for key, q in pairs(DB.quests) do
@@ -1195,6 +1309,10 @@ f:SetScript("OnEvent", function()
   if event == "PLAYER_ENTERING_WORLD"
      or event == "ZONE_CHANGED_NEW_AREA"
      or event == "RAID_ROSTER_UPDATE" then
+    if migrationNote then
+      Print(migrationNote)
+      migrationNote = nil
+    end
     UpdateVisibility()
 
   elseif event == "BAG_UPDATE" or event == "PLAYER_MONEY" then
@@ -1333,6 +1451,7 @@ SlashCmdList["TURNITIN"] = function(msg)
     local reward = QuestFrameRewardPanel and QuestFrameRewardPanel:IsVisible()
     if detail or reward then MergeRewards(q, CaptureRewards()) end
     q.repeatable = true
+    q.manual = true
     StampLocation(q)
     DB.selected = key
     Print("Recorded repeatable quest: " .. title)

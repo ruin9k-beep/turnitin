@@ -40,7 +40,7 @@ Left-click the minimap coin for the quest list, right-click it for the tracker w
 
 ## Notes and limitations
 
-- The 1.12 client does not flag repeatable quests. A quest counts as repeatable once an NPC offers it again after you turned it in, or when you track it by hand.
+- The 1.12 client does not flag repeatable quests. A quest counts as repeatable once an NPC offers it again with the same quest text after you turned it in (quest chains that reuse a title are not mistaken for repeats), or when you track it by hand.
 - Honor, reputation and XP are read from English chat messages after a turn-in.
 - Quest windows may close after each turn-in, so auto turn-in can need one right-click per cycle.
 - Written for the 1.12 client (Lua 5.0). Tested against a mock of the WoW API rather than the live client, so please report anything that behaves differently in the real client.
