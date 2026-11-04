@@ -14,8 +14,8 @@ A quality-of-life addon for **Turtle WoW** (1.12 client, Lua 5.0 API) that takes
 
 ## Install
 
-1. Download this repository (green **Code** button, **Download ZIP**).
-2. Copy the `turnitin` folder into `World of Warcraft/Interface/AddOns/`. If you have an older `TurnItIn` folder, replace it; your recorded quests are kept.
+1. Download this repository (green **Code** button, **Download ZIP**), or clone it straight into your AddOns folder with a Git-based addon manager.
+2. The addon files sit at the root of the repository, so the folder must be named `turnitin`. Unzip or clone it to `World of Warcraft/Interface/AddOns/turnitin`, so that `turnitin.toc` sits directly inside that folder. A downloaded ZIP unpacks to `turnitin-main`, so rename it to `turnitin`. If you have an older `TurnItIn` folder, remove it; your recorded quests are kept.
 3. Restart the game client. A brand-new addon is not picked up by `/console reloadui`.
 
 ## Use
