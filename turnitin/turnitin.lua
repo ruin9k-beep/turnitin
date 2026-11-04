@@ -11,6 +11,7 @@ local pending            -- turn-in whose honor/rep/xp is being observed
 local pendingTime = 0
 local Refresh            -- forward declaration
 local RefreshList        -- forward declaration (quest list window)
+local RemoveQuest, RemoveAllQuests   -- forward declarations
 local preview            -- key of the quest whose dialog is open (not yet tracked)
 local debugOn = false
 local migrationNote  -- one-time message about quests re-checked on load
@@ -271,6 +272,18 @@ local function RepeatableList()
   return list
 end
 
+-- The tracked quest that was turned in most recently. Uses a counter rather than
+-- the clock, so it is exact even for turn-ins within the same second.
+local function MostRecentTurnIn()
+  local best, bestSeq = nil, 0
+  for key, q in pairs(DB.quests) do
+    if q.repeatable and (q.turnSeq or 0) > bestSeq then
+      best, bestSeq = key, q.turnSeq
+    end
+  end
+  return best
+end
+
 local function DisplayName(key, list)
   local q = DB.quests[key]
   for i = 1, table.getn(list) do
@@ -432,7 +445,7 @@ Refresh = function()
 
   -- Keep the selection valid
   local cur = DB.selected and DB.quests[DB.selected]
-  if not (cur and cur.repeatable) then DB.selected = list[1] end
+  if not (cur and cur.repeatable) then DB.selected = MostRecentTurnIn() or list[1] end
   local q, isPreview = View()
 
   local extra = 0
@@ -644,9 +657,39 @@ local listCount = list:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 listCount:SetPoint("TOPRIGHT", list, "TOPRIGHT", -40, -48)
 listCount:SetJustifyH("RIGHT")
 
+StaticPopupDialogs["TII_REMOVE_ALL"] = {
+  text = "Remove all %s quests from Turn It In? Tracked and untracked quests are both forgotten.",
+  button1 = "Remove all",
+  button2 = "Cancel",
+  OnAccept = function()
+    if RemoveAllQuests then
+      local n = RemoveAllQuests()
+      Print("Removed " .. n .. " quest" .. (n == 1 and "" or "s") .. ".")
+    end
+  end,
+  timeout = 0,
+  whileDead = 1,
+  hideOnEscape = 1,
+}
+
+local removeAll = CreateFrame("Button", "TIIRemoveAll", list, "UIPanelButtonTemplate")
+removeAll:SetWidth(130)
+removeAll:SetHeight(22)
+removeAll:SetPoint("BOTTOMLEFT", list, "BOTTOMLEFT", 20, 16)
+removeAll:SetText("Remove all quests")
+removeAll:SetScript("OnClick", function()
+  local n = 0
+  for _ in pairs(DB.quests) do n = n + 1 end
+  if n == 0 then
+    Print("There are no quests to remove.")
+    return
+  end
+  StaticPopup_Show("TII_REMOVE_ALL", tostring(n))
+end)
+
 local scroll = CreateFrame("ScrollFrame", "TIIListScroll", list, "UIPanelScrollFrameTemplate")
 scroll:SetPoint("TOPLEFT", list, "TOPLEFT", 18, -74)
-scroll:SetPoint("BOTTOMRIGHT", list, "BOTTOMRIGHT", -36, 18)
+scroll:SetPoint("BOTTOMRIGHT", list, "BOTTOMRIGHT", -36, 46)
 local child = CreateFrame("Frame", "TIIListChild", scroll)
 child:SetWidth(380)
 child:SetHeight(10)
@@ -725,15 +768,35 @@ local function GetRow(i)
 
   local fs = r:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   fs:SetPoint("LEFT", r, "LEFT", 4, 0)
-  fs:SetWidth(290)
+  fs:SetWidth(280)
   fs:SetHeight(16)
   fs:SetJustifyH("LEFT")
   r.text = fs
 
   local rt = r:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  rt:SetPoint("RIGHT", r, "RIGHT", -4, 0)
+  rt:SetPoint("RIGHT", r, "RIGHT", -24, 0)
   rt:SetJustifyH("RIGHT")
   r.right = rt
+
+  local del = CreateFrame("Button", "TIIListDel" .. i, r)
+  del:SetWidth(16)
+  del:SetHeight(16)
+  del:SetPoint("RIGHT", r, "RIGHT", -3, 0)
+  del:SetHighlightTexture("Interface\\Buttons\\UI-Common-MouseHilight")
+  local x = del:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  x:SetPoint("CENTER", del, "CENTER", 0, 0)
+  x:SetText("|cffff4040x|r")
+  del:SetScript("OnClick", function()
+    if this.key then RemoveQuest(this.key) end
+  end)
+  del:SetScript("OnEnter", function()
+    GameTooltip:SetOwner(this, "ANCHOR_RIGHT")
+    GameTooltip:SetText("Remove this quest", 1, 0.3, 0.3)
+    GameTooltip:AddLine("Forgets it and everything recorded about it.", 0.8, 0.8, 0.8)
+    GameTooltip:Show()
+  end)
+  del:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  r.del = del
 
   r:SetScript("OnClick", function()
     local q = this.key and DB.quests[this.key]
@@ -808,11 +871,13 @@ RefreshList = function()
     used = 1
     local r = GetRow(1)
     r.key = nil
+    r.del:Hide()
     r.text:SetText("|cff999999No quests known yet. Open a repeatable|r")
     r.right:SetText("")
     r:Show()
     local r2 = GetRow(2)
     r2.key = nil
+    r2.del:Hide()
     r2.text:SetText("|cff999999quest with an NPC to record it.|r")
     r2.right:SetText("")
     r2:Show()
@@ -824,10 +889,13 @@ RefreshList = function()
     local r = GetRow(i)
     used = i
     r.key = e.key
+    r.del.key = e.key
     if e.header then
+      r.del:Hide()
       r.text:SetText("|cffffd100" .. e.header .. "|r")
       r.right:SetText("")
     else
+      r.del:Show()
       local q = DB.quests[e.key]
       local color = q.repeatable and "|cffffffff" or "|cff999999"
       if DB.selected == e.key then color = "|cff00ff00" end
@@ -989,6 +1057,47 @@ timerFrame:SetScript("OnUpdate", function()
   if pendingTime >= 2 then FinalizePending() end
 end)
 
+----------------------------------------------------------------
+-- Quest IDs (needs a client mod such as nampower). When the ID of the open quest
+-- can be read it decides everything: a completed ID that is offered again is a
+-- repeatable quest, and a different ID under a reused title is a different quest.
+-- Without an ID the text comparison below is used instead.
+----------------------------------------------------------------
+local function DialogId()
+  if not GetQuestDialogQuestId then return nil end
+  local ok, id = pcall(GetQuestDialogQuestId)
+  if ok and type(id) == "number" and id > 0 then return id end
+  return nil
+end
+
+local function ResetQuest(q)
+  q.completions = 0
+  q.fpDetail, q.detailAt, q.fpDone, q.fpLog, q.logAt, q.observed = nil, nil, nil, nil, nil, nil
+  if not q.manual then q.repeatable = nil end
+end
+
+-- Attach the ID to the record. A new ID under the same name starts a fresh record.
+local function SyncId(q, id)
+  if not id then return end
+  if q.id and q.id ~= id then
+    Debug("different quest ID under the same title: " .. q.title .. " " .. q.id .. " -> " .. id)
+    ResetQuest(q)
+  elseif not q.id and q.repeatable and (q.completions or 0) >= 1 then
+    -- Quest confirmed as repeatable before IDs were recorded.
+    DB.doneIds[id] = true
+  end
+  q.id = id
+end
+
+local function CheckDetailId(q, id)
+  if DB.doneIds[id] and not q.repeatable then
+    q.repeatable = true
+    StampLocation(q)
+    Print("Recorded repeatable quest: " .. q.title)
+    UpdateVisibility()
+  end
+end
+
 -- Called just before the reward is actually accepted.
 local function OnReward()
   if not DB then return end
@@ -1007,8 +1116,10 @@ local function OnReward()
   MergeRewards(q, CaptureRewards())
 
   -- A different completion text under the same title is another quest of a chain
+  local id = DialogId()
+  SyncId(q, id)
   local fpDone = Fingerprint(GetRewardText())
-  if fpDone and q.fpDone and fpDone ~= q.fpDone then
+  if not id and fpDone and q.fpDone and fpDone ~= q.fpDone then
     q.completions = 0
     q.fpDetail = nil
     q.detailAt = nil
@@ -1019,9 +1130,13 @@ local function OnReward()
   if fpDone then q.fpDone = fpDone end
 
   q.completions = q.completions + 1
+  if id then DB.doneIds[id] = true end
   q.last = time()
+  DB.turnSeq = (DB.turnSeq or 0) + 1
+  q.turnSeq = DB.turnSeq
   StampLocation(q)
   if q.completions >= 2 then q.repeatable = true end
+  if q.repeatable then DB.selected = key end
 
   pending = { key = key, rep = {}, honor = 0, xp = 0 }
   pendingTime = 0
@@ -1040,6 +1155,46 @@ end
 -- as repeatable once it is offered again after being turned in
 -- (or once it has been turned in twice).
 ----------------------------------------------------------------
+-- Forget one quest. If it was the selected one, auto turn-in is switched off so
+-- it cannot carry on with whichever quest becomes selected next.
+RemoveQuest = function(key)
+  if not DB or not DB.quests[key] then return end
+  local title = DB.quests[key].title
+  if DB.quests[key].id then DB.doneIds[DB.quests[key].id] = nil end
+  DB.quests[key] = nil
+  seen[key] = nil
+  if preview == key then preview = nil end
+  if pending and pending.key == key then
+    pending = nil
+    timerFrame:Hide()
+  end
+  if DB.selected == key then
+    DB.selected = nil
+    auto = false
+  end
+  Debug("removed: " .. key)
+  UpdateVisibility()
+  Refresh()
+  return title
+end
+
+RemoveAllQuests = function()
+  if not DB then return 0 end
+  DB.doneIds = {}
+  local n = 0
+  for _ in pairs(DB.quests) do n = n + 1 end
+  DB.quests = {}
+  DB.selected = nil
+  for k in pairs(seen) do seen[k] = nil end
+  preview = nil
+  pending = nil
+  timerFrame:Hide()
+  auto = false
+  UpdateVisibility()
+  Refresh()
+  return n
+end
+
 -- Only logs what an NPC offers. A title alone cannot show that a quest repeats,
 -- because quest chains reuse titles; the quest text is compared in CheckDetail.
 local function MarkAvailable(title)
@@ -1098,8 +1253,15 @@ local function Observe(stage)
   q.last = time()
   StampLocation(q)
 
+  local id = DialogId()
+  SyncId(q, id)
+
   if stage == "detail" then
-    CheckDetail(q, Fingerprint(GetQuestText(), GetObjectiveText()))
+    if id then
+      CheckDetailId(q, id)
+    else
+      CheckDetail(q, Fingerprint(GetQuestText(), GetObjectiveText()))
+    end
   end
 
   if stage == "progress" then
@@ -1292,13 +1454,29 @@ f:SetScript("OnEvent", function()
       end
     end
 
-    -- Forget quests that were turned in once and never came back
-    local now = time()
-    for key, q in pairs(DB.quests) do
-      if not q.repeatable and q.last and now - q.last > 7 * 86400 then
-        DB.quests[key] = nil
+    -- Give quests recorded before turn-in order was tracked a place in line,
+    -- oldest first, using the time they were last handed in.
+    if not DB.turnSeqDone then
+      DB.turnSeqDone = true
+      local old = {}
+      for key, q in pairs(DB.quests) do
+        if not q.turnSeq and (q.completions or 0) >= 1 then table.insert(old, key) end
+      end
+      table.sort(old, function(a, b)
+        local la, lb = DB.quests[a].last or 0, DB.quests[b].last or 0
+        if la ~= lb then return la < lb end
+        return a < b
+      end)
+      for i = 1, table.getn(old) do
+        DB.turnSeq = (DB.turnSeq or 0) + 1
+        DB.quests[old[i]].turnSeq = DB.turnSeq
       end
     end
+
+    -- Open on the quest that was turned in last.
+    DB.selected = MostRecentTurnIn() or DB.selected
+
+    DB.doneIds = DB.doneIds or {}
     DB.listMode = DB.listMode or "quest"
     InitMinimapButton()
     Refresh()
@@ -1402,6 +1580,152 @@ f:SetScript("OnEvent", function()
 end)
 
 ----------------------------------------------------------------
+-- Quest ID diagnostics (/tii ids). Reports what the installed client mods
+-- (nampower, ClassicAPI, SuperWoW) tell us about a quest, so the addon can be
+-- built on real data instead of guesses. Changes nothing.
+----------------------------------------------------------------
+local function Hex(n)
+  if type(n) ~= "number" then return tostring(n) end
+  return string.format("0x%X", n)
+end
+
+-- The individual bits set in a flags number, e.g. "0x8,0x1000".
+local function SetBits(n)
+  if type(n) ~= "number" or n < 0 then return "" end
+  local out, bit = "", 1
+  for i = 0, 30 do
+    if math.mod(math.floor(n / bit), 2) == 1 then
+      if out ~= "" then out = out .. "," end
+      out = out .. Hex(bit)
+    end
+    bit = bit * 2
+  end
+  return out
+end
+
+local function Short(v)
+  local t = type(v)
+  if t == "table" then return "{" .. table.getn(v) .. " entries}" end
+  local str = tostring(v)
+  if string.len(str) > 28 then str = string.sub(str, 1, 28) .. "..." end
+  return str
+end
+
+-- One line about a quest ID from C_QuestLog.GetQuestDetails, or why there is none.
+local function DescribeId(id)
+  if not (C_QuestLog and C_QuestLog.GetQuestDetails) then
+    return "C_QuestLog.GetQuestDetails is not available"
+  end
+  local ok, d = pcall(C_QuestLog.GetQuestDetails, id)
+  if not ok then return "GetQuestDetails error: " .. tostring(d) end
+  if type(d) ~= "table" then
+    return "no details yet (quest data not cached): " .. tostring(d)
+  end
+  local out = "flags=" .. Hex(d.questFlags)
+  local bits = SetBits(d.questFlags)
+  if bits ~= "" then out = out .. " [" .. bits .. "]" end
+  if d.questType ~= nil then out = out .. " type=" .. Short(d.questType) end
+  return out
+end
+
+-- Every plain field of the details table, so unknown fields (a repeatable
+-- marker, say) show up too.
+local function AllFields(id)
+  if not (C_QuestLog and C_QuestLog.GetQuestDetails) then return nil end
+  local ok, d = pcall(C_QuestLog.GetQuestDetails, id)
+  if not ok or type(d) ~= "table" then return nil end
+  local names = {}
+  for k in pairs(d) do table.insert(names, tostring(k)) end
+  table.sort(names)
+  local out = ""
+  for i = 1, table.getn(names) do
+    local v = d[names[i]]
+    if v == nil then v = d[tonumber(names[i])] end
+    out = out .. names[i] .. "=" .. Short(v) .. "  "
+  end
+  return out
+end
+
+local function LogIdForTitle(title)
+  if not GetQuestIDForLogIndex then return nil end
+  for i = 1, GetNumQuestLogEntries() do
+    local t, _, _, isHeader = GetQuestLogTitle(i)
+    if t and not isHeader and Strip(t) == title then
+      local ok, id = pcall(GetQuestIDForLogIndex, i)
+      if ok then return id, i end
+      return nil
+    end
+  end
+  return nil
+end
+
+local function DumpIds(logMode)
+  local function yn(f) return f and "yes" or "NO" end
+  Print("quest ID functions: GetQuestDialogQuestId " .. yn(GetQuestDialogQuestId) ..
+        ", GetQuestIDForLogIndex " .. yn(GetQuestIDForLogIndex) ..
+        ", GetQuestLogQuestIds " .. yn(GetQuestLogQuestIds) ..
+        ", C_QuestLog.GetQuestDetails " .. yn(C_QuestLog and C_QuestLog.GetQuestDetails))
+
+  if logMode then
+    local n = 0
+    for i = 1, GetNumQuestLogEntries() do
+      local t, _, _, isHeader = GetQuestLogTitle(i)
+      if t and not isHeader then
+        n = n + 1
+        local id = nil
+        if GetQuestIDForLogIndex then
+          local ok, v = pcall(GetQuestIDForLogIndex, i)
+          if ok then id = v end
+        end
+        Print(Strip(t) .. "  id=" .. tostring(id) ..
+              (id and ("  " .. DescribeId(id)) or ""))
+      end
+    end
+    if n == 0 then Print("The quest log is empty.") end
+    return
+  end
+
+  local npc, title = UnitName("npc"), Strip(GetTitleText())
+  if not npc or not title or title == "" then
+    Print("Open a quest with an NPC first (the offer, hand-in or reward window), then type /tii ids. /tii ids log lists every quest in your log.")
+    return
+  end
+  Print("dialog: " .. title .. " (" .. npc .. ")")
+
+  local dialogId = nil
+  if GetQuestDialogQuestId then
+    local ok, a, b = pcall(GetQuestDialogQuestId)
+    if ok then
+      dialogId = a
+      Print("GetQuestDialogQuestId() -> " .. tostring(a) .. (b ~= nil and (", " .. tostring(b)) or ""))
+    else
+      Print("GetQuestDialogQuestId() error: " .. tostring(a))
+    end
+  end
+
+  local logId, idx = LogIdForTitle(title)
+  if GetQuestIDForLogIndex then
+    if logId then
+      Print("quest log entry " .. idx .. ": id " .. tostring(logId) ..
+            ((dialogId and dialogId == logId) and "  (matches the dialog)" or
+             (dialogId and "  (DIFFERENT from the dialog id)" or "")))
+    else
+      Print("not in your quest log (normal at the offer step)")
+    end
+  end
+
+  local id = dialogId
+  if not id or id == 0 then id = logId end
+  if id and id ~= 0 then
+    Print("id " .. tostring(id) .. ": " .. DescribeId(id))
+    local all = AllFields(id)
+    if all then Print("fields: " .. all) end
+  else
+    Print("no quest ID could be read for this dialog")
+  end
+end
+
+----------------------------------------------------------------
 -- Slash commands
 ----------------------------------------------------------------
 SLASH_TURNITIN1 = "/tii"
@@ -1433,6 +1757,10 @@ SlashCmdList["TURNITIN"] = function(msg)
     DB.minimapHidden = not DB.minimapHidden
     InitMinimapButton()
     Print("Minimap button " .. (DB.minimapHidden and "hidden" or "shown"))
+  elseif msg == "ids" then
+    DumpIds(false)
+  elseif msg == "ids log" then
+    DumpIds(true)
   elseif msg == "debug" then
     debugOn = not debugOn
     Print("Debug output " .. (debugOn and "ON" or "OFF"))
@@ -1457,15 +1785,19 @@ SlashCmdList["TURNITIN"] = function(msg)
     Print("Recorded repeatable quest: " .. title)
     UpdateVisibility()
     Refresh()
+  elseif msg == "forget all" or msg == "clear" then
+    local n = RemoveAllQuests()
+    Print("Removed " .. n .. " quest" .. (n == 1 and "" or "s") .. ".")
   elseif msg == "forget" then
     local q = Selected()
     if q then
-      Print("Forgot " .. q.title)
-      DB.quests[DB.selected] = nil
-      DB.selected = nil
-      Refresh()
+      local title = q.title
+      RemoveQuest(DB.selected)
+      Print("Removed " .. title)
+    else
+      Print("No quest is selected. Use the x in the quest list to remove one.")
     end
   else
-    Print("/tii [toggle] | show | hide | list | minimap | auto | track | forget | debug")
+    Print("/tii [toggle] | show | hide | list | minimap | auto | track | forget | forget all | ids | ids log | debug")
   end
 end

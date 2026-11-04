@@ -1,7 +1,7 @@
 ## Interface: 11200
 ## Title: Turn It In
 ## Notes: Records repeatable quests, projects their rewards and turns them in automatically
-## Version: 2.5
+## Version: 3.0
 ## SavedVariables: TurnItInDB
 
 turnitin.lua

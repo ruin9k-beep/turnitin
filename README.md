@@ -32,15 +32,21 @@ A quality-of-life addon for **Turtle WoW** (1.12 client, Lua 5.0 API) that takes
 | `/tii list` | Open or close the known-quests list |
 | `/tii auto` | Switch auto turn-in on or off |
 | `/tii track` | Track the quest in the open dialog |
-| `/tii forget` | Forget the selected quest |
+| `/tii forget` | Remove the selected quest |
+| `/tii forget all` | Remove every recorded quest |
 | `/tii minimap` | Show or hide the minimap button |
 | `/tii debug` | Print what NPCs offer, to diagnose detection problems |
+| `/tii ids` | Print the quest ID and flags the client reports for the open quest dialog (needs nampower/ClassicAPI/SuperWoW) |
+| `/tii ids log` | The same for every quest in your quest log |
 
 Left-click the minimap coin for the quest list, right-click it for the tracker window, and drag it to move it.
 
+In the quest list, click the red **x** at the end of a row to remove that quest, or **Remove all quests** at the bottom (it asks first).
+
 ## Notes and limitations
 
-- The 1.12 client does not flag repeatable quests. A quest counts as repeatable once an NPC offers it again with the same quest text after you turned it in (quest chains that reuse a title are not mistaken for repeats), or when you track it by hand.
+- The 1.12 client does not flag repeatable quests. With a client mod that exposes quest IDs (such as nampower), a quest counts as repeatable once an ID you have completed is offered again, which also keeps quest chains that reuse a title from being mistaken for repeats. Without one, the addon falls back to comparing quest text.
+- Without quest IDs, the rule is: A quest counts as repeatable once an NPC offers it again with the same quest text after you turned it in (quest chains that reuse a title are not mistaken for repeats), or when you track it by hand.
 - Honor, reputation and XP are read from English chat messages after a turn-in.
 - Quest windows may close after each turn-in, so auto turn-in can need one right-click per cycle.
 - Written for the 1.12 client (Lua 5.0). Tested against a mock of the WoW API rather than the live client, so please report anything that behaves differently in the real client.
